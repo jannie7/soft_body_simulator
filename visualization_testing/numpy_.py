@@ -9,8 +9,8 @@ import time
 
 
 SPRING_CONSTANT = 10
-DAMPING = 2
-SIM_SPEED = 2
+DAMPING = 0.5
+SIM_SPEED = 10
 
 GRAVITY = np.array([0, 9.8])
 
@@ -58,6 +58,33 @@ def add_square(positions, springs, top_left, size,connect=False,type = 'right'):
 
     return positions, springs
 
+def add_circle(positions, springs, center, radius, num_points, connect=False):
+    num_existing_points = positions.shape[0]
+    angle_step = 2 * np.pi / num_points
+    new_positions = [
+        [center[0] + radius * np.cos(i * angle_step), center[1] + radius * np.sin(i * angle_step)]
+        for i in range(num_points)
+    ]
+    new_positions.append(center)
+
+    new_positions = np.array(new_positions)
+
+    positions = np.vstack((positions, new_positions))
+
+    outer_edge = [
+        [num_existing_points + i, num_existing_points + (i + 1) % num_points]
+        for i in range(num_points)
+    ]
+
+    inner_edges = [
+        [num_existing_points + i, num_existing_points + num_points]
+        for i in range(num_points)
+    ]
+
+    springs = np.vstack((springs, outer_edge, inner_edges))
+
+
+    return positions, springs
 
 # Initialize positions of points in a square
 positions = np.array([
@@ -91,7 +118,7 @@ positions, springs = add_square(positions, springs, [390+290, 250], 50,connect=T
 positions, springs = add_square(positions, springs, [390+390, 250], 50,connect=True,type='right')
 positions, springs = add_square(positions, springs, [390+390, 320], 50,connect=True,type='down')
 
-
+positions, springs = add_circle(positions, springs, [900, 100], 50, 9)
 
 # for i in range(1000):
 #     positions, springs = add_square(positions, springs, [50*i % 1280, 0], 50)
@@ -118,10 +145,8 @@ forces = np.zeros_like(positions)
 # Simulation loop
 def simulate(delta):
     delta *= SIM_SPEED
-    global positions, velocities,forces
-    
-    forces.fill(0)    
-
+    global positions, velocities,forces    
+    forces.fill(0)
     # Apply gravity to all points
     forces += GRAVITY * masses[:, np.newaxis]
 
@@ -153,7 +178,7 @@ def simulate(delta):
 
     relative_velocity = velocities[springs[:, 1]] - velocities[springs[:, 0]]  # shape: (num_springs, 2)
 
-    damping_force = DAMPING * np.sum(relative_velocity * direction, axis=1)[:, None] * direction  # shape: (num_springs, 2)
+    damping_force = DAMPING * np.sum(relative_velocity * direction, axis=1)[:, None]  * direction  # shape: (num_springs, 2)
 
     total_force = spring_force + damping_force  # shape: (num_springs, 2)
    
