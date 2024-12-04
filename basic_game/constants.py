@@ -1,2 +1,3 @@
 
 WINDOW_LABEL = "Basic Game"
+WIDTH, HEIGHT = 800, 600

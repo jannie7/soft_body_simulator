@@ -5,8 +5,8 @@ import pygame as game
 from pygame import gfxdraw
 from pygame.locals import *
 
-from basic_game.utils import DISPLAY_DIMENSION, COLORS
-from basic_game.constants import WINDOW_LABEL
+from utils import DISPLAY_DIMENSION, COLORS
+from constants import WINDOW_LABEL
 
 
 
