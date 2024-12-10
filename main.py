@@ -71,14 +71,9 @@ class Circle(Shape):
         
         for i in range(count):
             self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[(i + 1) % count], self.k))
-            
+            self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[(i + 3) % count], self.k))
         
-        self.outedge = [self.spring_structure[i] for i in range(count)]
-
-        #connect every point with every other point
-        for i in range(count):
-            for j in range(i+1, count):
-                self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[j], self.k))
+        self.outedge = [self.spring_structure[i * 2] for i in range(count)]
         self.make_innerSprings()
              
 class Triangle(Shape):
@@ -357,7 +352,8 @@ def main():
                 selected_point = None 
                 pan_mode = False
             if event.type == pg.MOUSEWHEEL:
-                target_scale = np.clip(Main_camera.scale + event.y,1,1000)
+                direction = event.y>0
+                target_scale = np.clip(Main_camera.scale * (1.1 if direction else 0.9),0.1,1000)
                 Main_camera.update_scale(target_scale)
             if event.type == gui.UI_BUTTON_PRESSED:
                 if event.ui_element == hello_button:                    
@@ -382,8 +378,7 @@ def main():
         #simulation
         for shape in world:    
             for spring in shape.spring_structure:                         
-                dis = spring.p1.pos - spring.p2.pos 
-                 
+                dis = spring.p1.pos - spring.p2.pos                  
                 new_length = np.linalg.norm(dis)
                 dir =   dis / new_length
                 spring.force = -spring.k * (new_length - spring.length) * dir
@@ -399,9 +394,6 @@ def main():
                     pm.pos[1] = 0
                     pm.velocity[1] *= -1 * 0.5
                     pm.velocity[0] *= 0.1            
-
-            # x_min, x_max, y_min, y_max = shape.bbox
-            # pg.draw.rect(surf,collusion_dict_color.get(shape, (0, 255, 0)) , (x_min, y_min, x_max - x_min, y_max - y_min), 1)
         
         #collusion detection
         for shape in world:
@@ -426,7 +418,8 @@ def main():
                     interp_value = 0
                     for edge in other_shape.outedge:
                         #calculate perpindicular distance from point to edge
-                        dist = np.abs(np.cross(edge.p2.pos - edge.p1.pos, edge.p1.pos - point_mass.pos)) / np.linalg.norm(edge.p2.pos - edge.p1.pos)
+                        dist = np.cross(edge.p2.pos - edge.p1.pos, edge.p1.pos - point_mass.pos)
+                        dist = np.abs(dist) / np.linalg.norm(edge.p2.pos - edge.p1.pos)
                         if dist < min_dist:
                             #compute the normal of the edge
                             normal = np.array([edge.p2.pos[1] - edge.p1.pos[1], edge.p1.pos[0] - edge.p2.pos[0]])
@@ -481,8 +474,7 @@ def main():
                     #             normal = -normal
                     if closest_edge:
                         collusion_info.append((point_mass, closest_edge, min_dist, closest_normal, interp_value))
-                        
-                            
+                                         
         #collusion resolution           
         for point_mass, edge, dist, normal, interp_value in collusion_info:
             #Example masses (replace with your actual values)
