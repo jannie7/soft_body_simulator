@@ -4,6 +4,7 @@ import pygame as pg
 import time
 
 import pygame_gui as gui
+import math
 
 
 class point_mass:
@@ -71,9 +72,15 @@ class Circle(Shape):
         
         for i in range(count):
             self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[(i + 1) % count], self.k))
+            self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[(i + 2) % count], self.k))
             self.spring_structure.append(Spring(self.pm_structure[i], self.pm_structure[(i + 3) % count], self.k))
         
-        self.outedge = [self.spring_structure[i * 2] for i in range(count)]
+        self.outedge = [self.spring_structure[i*3] for i in range(count)]
+
+        for i in range(count):
+            spring = Spring(self.pm_structure[i], self.pm_structure[(i + count // 2) % count], self.k)
+            if not any((spring.p1 == s.p1 and spring.p2 == s.p2) or (spring.p1 == s.p2 and spring.p2 == s.p1) for s in self.spring_structure):
+                self.spring_structure.append(spring)
         self.make_innerSprings()
              
 class Triangle(Shape):
@@ -109,6 +116,15 @@ class Camera:
     def screen_to_world(self,pos):
         t= ((pos[0] * 2/self.display[0])-1, 1-(pos[1] * 2/self.display[1]))
         return (t[0] * self.Camera_ratio[0] + self.pos[0], t[1] * self.Camera_ratio[1] + self.pos[1])
+    
+    def ndc_space_array(self, positions):
+        return (positions - self.pos) / self.Camera_ratio
+
+    def screen_space_array(self, positions):
+        ndc = self.ndc_space_array(positions)
+        ndc[:, 1] *= -1
+        return ((ndc + 1) * np.array([self.display[0] / 2, self.display[1] / 2]))
+    
     def update_scale(self, scale):
         self.scale = scale
         self.Camera_ratio = [self.scale, self.scale/self.aspect_ratio]
@@ -284,7 +300,6 @@ DAMPING = 0.5
 TOLORANCE = 0.0001
 
 def main():
-    global dt
     pg.init()
     display = (1280, 720)
     surf = pg.display.set_mode(display)
@@ -292,41 +307,125 @@ def main():
 
     manager = gui.UIManager(display)
 
-    hello_button = gui.elements.UIButton(relative_rect=pg.Rect((1280-100-10, 10), (100, 25)),
-                                             text='Switch_mode',
+    Mode_btn = gui.elements.UIButton(relative_rect=pg.Rect((1280-150-10, 10), (150, 25)),
+                                             text='Switch Mode',
                                              manager=manager)
+    Render_Springs_btn = gui.elements.UIButton(relative_rect=pg.Rect((1280-150-10, 40), (150, 25)),
+                                             text='Toggle Springs',
+                                             manager=manager)
+    Render_transfrom_btn = gui.elements.UIButton(relative_rect=pg.Rect((1280-150-10, 70), (150, 25)),
+                                             text='Transform Mode',
+                                             manager=manager)
+    
     details_test = gui.elements.UILabel(relative_rect=pg.Rect((10, 10), (-1, -1)),
                                              text='SoftBody Simulation',
                                              manager=manager)
-    details_fps = gui.elements.UILabel(relative_rect=pg.Rect((10, 30), (-1, -1)),
-                                             text='100',
+    details_Mode = gui.elements.UILabel(relative_rect=pg.Rect((10, 30+10), (-1, -1)),
+                                             text='Mode: Sequential',
+                                             manager=manager)
+    details_fps = gui.elements.UILabel(relative_rect=pg.Rect((10, 50+10), (-1, -1)),
+                                             text='FPS/dt: 0/0ms',
+                                             manager=manager)
+    details_sim = gui.elements.UILabel(relative_rect=pg.Rect((10, 70+10), (-1, -1)),
+                                             text='Sim time: 0ms',
+                                             manager=manager)
+    details_col = gui.elements.UILabel(relative_rect=pg.Rect((10, 90+10), (-1, -1)),
+                                             text='Col time: 0ms',
+                                             manager=manager)
+    details_viz = gui.elements.UILabel(relative_rect=pg.Rect((10, 110+10), (-1, -1)),
+                                             text='Viz time: 0ms',
+                                             manager=manager)
+    details_other = gui.elements.UILabel(relative_rect=pg.Rect((10, 130+10), (-1, -1)),
+                                             text='Pcount: 0',
                                              manager=manager)
     
     
-    
+    Main_camera = Camera(np.array([5.0,5.0]), 15,display)
 
     world = []
-    world.append(Square(0, 10, 0.5,5,m=0.1))
-    world.append(Square(5, 10, 2.5))
-    world.append(Triangle(10, 10, 2.5,m=0.5))
-    world.append(Circle(-6, 10, 0.5,20,m=1,k=50))
-    world.append(Circle(20, 20, 0.5,11,m=1,k=50))
+
+    # world.append(Square(0, 10, 0.5,5,m=0.1))
+    # world.append(Square(5, 10, 2.5))
+    # world.append(Triangle(10, 10, 2.5,m=0.5))
+    # world.append(Circle(-1, 20, 1,10,m=1,k=100))
+    # world.append(Circle(4, 20, 0.5,11,m=1,k=100))
 
 
+    num_shapes = 20
+    rows = math.ceil(math.sqrt(num_shapes))
+    cols = math.ceil(num_shapes / rows)
+    spacing = 3  # Adjust spacing as needed
 
-    Main_camera = Camera(np.array([5.0,5.0]), 10,display)
+    for i in range(rows):
+        for j in range(cols):
+            if len(world) >= num_shapes:
+                break
+            x = j * spacing
+            y = i * spacing
+            if (i + j) % 2 == 0:
+                world.append(Square(x, y, size=1, k=40, m=1))
+            else:
+                world.append(Circle(x, y, radius=1, count=11, k=20, m=1))
+            
+
+    #numpy representation of world
+    points_ref = [pm for shape in world for pm in shape.pm_structure]
+    springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.spring_structure ])
+    outedge = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.outedge ])
+    inner_springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.inner_springs ])    
+    lengths = np.array([spring.length for shape in world for spring in shape.spring_structure])
+    masses = np.array([pm.mass for shape in world for pm in shape.pm_structure])
+    spring_constants = np.array([spring.k for shape in world for spring in shape.spring_structure])
+
+    positions = np.array([pm.pos for pm in points_ref], dtype=float)
+    velocities = np.array([pm.velocity for pm in points_ref], dtype=float)
+    forces = np.array([pm.force for pm in points_ref], dtype=float)
+
+    for i, pm in enumerate(points_ref):
+        pm.pos = positions[i]
+        pm.velocity = velocities[i]
+        pm.force = forces[i]
+
     
 
+    print(f"shape of springs {springs.shape}")
+    print(f"shape of positions {positions.shape}")
+    print(f"shape of lengths {lengths.shape}")
+    print(f"shape of masses {masses.shape}")
+    print(f"shape of velocities {velocities.shape}")
+    print(f"shape of forces {forces.shape}")
+    print(f"shape of spring_constants {spring_constants.shape}")
+
+
+    
+    
     selected_point = None
     mouse_pos = None
     pan_mode = False
     pan_start = None
-    dt = 0.01
+    dt = DELTA
+
+    numpy_mode = True
+    show_spring = False
+    render_mode = False
+
+    simulation_time = 0
+    visualization_time = 0
+    shape_viz_time = 0
+    collision_time = 0
+    dt_sum = 0.001
+
+    last_ui_update = 0
+
+    count = 0
+
+
     while True:   
+        count += 1
         start = time.perf_counter()
         #event and input handling            
         for event in pg.event.get():
-            
+            mode_changed = False
             if event.type == pg.QUIT:
                 pg.quit()
                 quit()  
@@ -356,14 +455,55 @@ def main():
                 target_scale = np.clip(Main_camera.scale * (1.1 if direction else 0.9),0.1,1000)
                 Main_camera.update_scale(target_scale)
             if event.type == gui.UI_BUTTON_PRESSED:
-                if event.ui_element == hello_button:                    
-                    details_fps.set_text(f'{1/dt:.2f} FPS {dt:.4f} delta')
+                if event.ui_element == Mode_btn:   
+                    numpy_mode = not numpy_mode 
+                    if(numpy_mode):
+                            #sync
+                            start_conv = time.perf_counter()
+                            points_ref = [pm for shape in world for pm in shape.pm_structure]
+                            springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.spring_structure ])
+                            outedge = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.outedge ])
+                            inner_springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.inner_springs ])
+                            positions = np.array([pm.pos for pm in points_ref])
+                            lengths = np.array([spring.length for shape in world for spring in shape.spring_structure])
+                            masses = np.array([pm.mass for shape in world for pm in shape.pm_structure])
+                            velocities = np.array([pm.velocity for shape in world for pm in shape.pm_structure])
+                            forces = np.array([pm.force for shape in world for pm in shape.pm_structure])
+                            spring_constants = np.array([spring.k for shape in world for spring in shape.spring_structure]) 
+                            
+                            for i, pm in enumerate(points_ref):
+                                pm.pos = positions[i]
+                                pm.velocity = velocities[i]
+                                pm.force = forces[i]
+                            print(f"conversion time {time.perf_counter()-start_conv}")
+                    if(not numpy_mode):
+                        start_conv = time.perf_counter()
+                        for i,point in enumerate(points_ref):
+                            point.pos = positions[i]
+                            point.velocity = velocities[i]
+                            point.force = forces[i]     
+                        print(f"conversion time {time.perf_counter()-start_conv}")
+                    details_Mode.set_text(f"Mode: {'Numpy (Linear Algebra)' if numpy_mode else 'Sequential'}")
+                    mode_changed = True
+                if(event.ui_element == Render_Springs_btn):
+                    show_spring = not show_spring
+                    mode_changed = True
+                if(event.ui_element == Render_transfrom_btn):
+                    render_mode = not render_mode
+                    mode_changed = True
             manager.process_events(event)
+            if mode_changed:
+                visualization_time = 0
+                simulation_time = 0
+                collision_time = 0
+                shape_viz_time = 0
+                count = 1
+                dt_sum = 0.001
         if selected_point and type(mouse_pos) != type(None):
             mouse_pos = np.array(Main_camera.screen_to_world(pg.mouse.get_pos()))          
-            selected_point.pos = mouse_pos
-            selected_point.velocity = np.array([0,0],dtype=float)
-            selected_point.force = np.array([0,0],dtype=float)
+            selected_point.pos += (-selected_point.pos + mouse_pos)
+            selected_point.velocity *= 0
+            selected_point.force **= 0
         if pan_mode:
             pan_end = np.array(pg.mouse.get_pos())
             pan_amt =(pan_end - pan_start)/Main_camera.display*2 * Main_camera.Camera_ratio
@@ -372,29 +512,61 @@ def main():
             pan_start = pan_end
         manager.update(dt)
 
-        surf.fill((0, 0, 0, 0))
+        
         collusion_info = []
 
+        start_sim = time.perf_counter()
+        delta_sim = min(0.016,dt)
         #simulation
-        for shape in world:    
-            for spring in shape.spring_structure:                         
-                dis = spring.p1.pos - spring.p2.pos                  
-                new_length = np.linalg.norm(dis)
-                dir =   dis / new_length
-                spring.force = -spring.k * (new_length - spring.length) * dir
-                damping_force = -DAMPING * np.dot((spring.p1.velocity - spring.p2.velocity) , dir) * dir
-                spring.p1.force += spring.force + damping_force
-                spring.p2.force -= spring.force + damping_force
-            for pm in shape.pm_structure:
-                pm.force += GRAVITY * pm.mass
-                pm.velocity += pm.force / pm.mass * dt
-                pm.pos += pm.velocity * dt
-                pm.force *= 0.0
-                if pm.pos[1] < 0:
-                    pm.pos[1] = 0
-                    pm.velocity[1] *= -1 * 0.5
-                    pm.velocity[0] *= 0.1            
+        if not numpy_mode:
+            for shape in world:    
+                for spring in shape.spring_structure:                         
+                    dis = spring.p1.pos - spring.p2.pos                  
+                    new_length = np.linalg.norm(dis)
+                    dir =   dis / new_length
+                    spring.force = -spring.k * (new_length - spring.length) * dir
+                    damping_force = -DAMPING * np.dot((spring.p1.velocity - spring.p2.velocity) , dir) * dir
+                    spring.p1.force += spring.force + damping_force
+                    spring.p2.force -= spring.force + damping_force
+                for pm in shape.pm_structure:
+                    pm.force += GRAVITY * pm.mass
+                    pm.velocity += pm.force / pm.mass * delta_sim
+                    pm.pos += pm.velocity * delta_sim
+                    pm.force *= 0.0
+                    if pm.pos[1] < 0:
+                        pm.pos[1] = 0
+                        pm.velocity[1] *= -0.5
+                        pm.velocity[0] *= 0.1   
+        else:
+            forces.fill(0)
+            forces += GRAVITY * masses[:, np.newaxis]     
+            displacement = positions[springs[:, 1]] - positions[springs[:, 0]]  # shape: (num_springs, 2)
+    
+            lengths_current = np.linalg.norm(displacement, axis=1)  # shape: (num_springs,)
+
+            direction = displacement / lengths_current[:, None]  # shape: (num_springs, 2)
+
+            spring_force = (spring_constants * (lengths_current - lengths))[:, None] * direction  # shape: (num_springs, 2)
+
+            relative_velocity = velocities[springs[:, 1]] - velocities[springs[:, 0]]  # shape: (num_springs, 2)
+
+            damping_force = DAMPING * np.sum(relative_velocity * direction, axis=1)[:, None]  * direction  # shape: (num_springs, 2)
+
+            total_force = spring_force + damping_force  # shape: (num_springs, 2)
         
+            np.add.at(forces, springs[:, 0], total_force)  
+            np.add.at(forces, springs[:, 1], -total_force)
+
+            # Update accelerations, velocities, and positions
+            accelerations = forces / masses[:, np.newaxis]
+            velocities += accelerations * delta_sim
+            positions += velocities * delta_sim
+
+            positions[:, 1] = np.maximum(positions[:, 1], 0)  
+            velocities[positions[:, 1] <= 0] *= np.array([0.1, -0.5])
+        simulation_time += time.perf_counter()-start_sim
+
+        start_collission = time.perf_counter()
         #collusion detection
         for shape in world:
             for other_shape in world:
@@ -483,21 +655,69 @@ def main():
             # tangent = np.array([-normal[1], normal[0]])
             # pg.draw.aaline(surf, (255, 0, 0), Main_camera.screen_space(point_mass.pos), Main_camera.screen_space(point_mass.pos + normal * 1), 4)
             # pg.draw.aaline(surf, (0, 0, 255), Main_camera.screen_space(point_mass.pos), Main_camera.screen_space(point_mass.pos + tangent * 1), 4)
-        
-        #drawing
-        for shape in world:
-            for spring in shape.outedge:
-                p1 = Main_camera.screen_space(spring.p1.pos)
-                p2 = Main_camera.screen_space(spring.p2.pos)
-                pg.draw.aaline(surf, (255, 255, 255), p1, p2, 4)
-            for spring in shape.inner_springs:
-                p1 = Main_camera.screen_space(spring.p1.pos)
-                p2 = Main_camera.screen_space(spring.p2.pos)
-                pg.draw.aaline(surf, (0, 255, 0), p1, p2, 4)
+        collision_time += time.perf_counter()-start_collission
 
+        start_viz = time.perf_counter()
+        surf.fill((0, 0, 0, 0))
+        #drawing
+        if render_mode:#not numpy_mode:
+            for shape in world:
+                for spring in shape.outedge:
+                    p1 = Main_camera.screen_space(spring.p1.pos)
+                    p2 = Main_camera.screen_space(spring.p2.pos)
+                    if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                        continue
+                    pg.draw.aaline(surf, (255, 255, 255), p1, p2)
+                if show_spring:
+                    for spring in shape.inner_springs:
+                        p1 = Main_camera.screen_space(spring.p1.pos)
+                        p2 = Main_camera.screen_space(spring.p2.pos)
+                        if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                            continue
+                        pg.draw.aaline(surf, (0, 255, 0), p1, p2)
+        else:
+            screen_space_positions = Main_camera.screen_space_array(positions)
+            
+            for spring in outedge:
+                p1 = screen_space_positions[spring[0]]
+                p2 = screen_space_positions[spring[1]]
+                if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                    continue
+                pg.draw.aaline(surf, (255, 255, 255), p1, p2)
+            if show_spring:
+                for spring in inner_springs:
+                    p1 = screen_space_positions[spring[0]]
+                    p2 = screen_space_positions[spring[1]]
+                    if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                        continue
+                    pg.draw.aaline(surf, (0, 255, 255), p1, p2)
+        
+        shape_viz_time += time.perf_counter()-start_viz
+
+        if(time.perf_counter()-last_ui_update > 0.250):
+            last_ui_update = time.perf_counter()
+            details_fps.set_text(f"FPS/dt (Avg): {1/(dt_sum/count):.0f}/{dt_sum*1000/count:.2f}ms (Current: {dt*1000:0.1f}ms)")
+            details_sim.set_text(f"Sim time: {simulation_time*1000/count:.3f}ms")
+            details_col.set_text(f"Col time: {collision_time*1000/count:.3f}ms")
+            details_viz.set_text(f"Viz time: {visualization_time*1000/count:.3f}ms (Shape time: {shape_viz_time*1000/count:.3f}ms)")
+            details_other.set_text(f"Point count: {len(points_ref)} Spring count: {len(springs)} Shape count: {len(world)} Render mode: {'SEQ' if render_mode else 'LA'}")
+
+        if(count>5000):
+            dt_sum = 500 *dt_sum/count
+            simulation_time = 500 *simulation_time/count
+            visualization_time = 500 *visualization_time/count
+            collision_time = 500 *collision_time/count
+            shape_viz_time = 500 *shape_viz_time/count
+            count = 500
+
+        
         manager.draw_ui(surf)
         pg.display.update()
+        visualization_time += time.perf_counter()-start_viz
+        
         dt = time.perf_counter()-start
+        dt_sum += dt
+
 
 
 
