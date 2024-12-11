@@ -413,7 +413,7 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
     SDL_Event event;
 
     PointMass* dragged_pm = nullptr;
-    float dt = 0.001;
+    double dt = 0.001;
     bool panning = false;
     Vector2D pan_start;
     // Main SDL loop
@@ -421,6 +421,7 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
     float total_force_update_time = 0.0f;
     float total_collision_detectio_time = 0.0f;
     float total_parallelizable_time = 0.0f;
+	bool use_openmp = true;
     while (running && current_time_step < num_time_steps) {
         auto start = SDL_GetTicks();
         while (SDL_PollEvent(&event)) {
@@ -463,6 +464,11 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
                 auto target_scale = max(0.1, camera->scale * (event.wheel.y > 0 ? 1.1 : 0.9));
                 camera->update_scale(target_scale);
             }
+			if (event.type == SDL_KEYDOWN) {
+				if (event.key.keysym.sym == SDLK_o) {
+					use_openmp = !use_openmp;
+				}
+			}
         }
         if (dragged_pm != nullptr) {
             int x, y;
@@ -484,10 +490,18 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
         // Update forces and point masses - parallelism introduced
 
         auto start_force_time = high_resolution_clock::now();
-        #pragma omp parallel for
-        for (auto& shape : world) {
-            shape->update_forces(dt);
-        } 
+        if (use_openmp) {
+#pragma omp parallel for
+            for (int i = 0; i < world.size(); ++i) {
+                world[i]->update_forces(dt);
+            }
+        }
+        else
+        {
+            for (auto& shape : world) {
+                shape->update_forces(dt);
+            }
+        }
         auto end_force_time = chrono::high_resolution_clock::now();
         chrono::duration<float> duration = end_force_time - start_force_time; 
         total_force_update_time += duration.count();
@@ -497,57 +511,118 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
         vector<Collinfo> collinfos;
         // Collision detection
         auto start_time = high_resolution_clock::now();
-        #pragma omp parallel for
-        for (auto& shape : world) {
-            for (auto& other_shape : world) {
-                if (shape == other_shape) {
-                    continue;
-                }
-                auto bbox1 = shape->bbox();
-                auto bbox2 = other_shape->bbox();
+        
+		//worse possible way imaginable to do this but its late and i need to sleep (code auto compeletion wrote the part after but its late lmao)
+        if (use_openmp) {
+#pragma omp parallel for
+            for (int i = 0; i < world.size(); ++i) {
+                auto shape = world[i];
+                for (auto& other_shape : world) {
+                    if (shape == other_shape) {
+                        continue;
+                    }
+                    auto bbox1 = shape->bbox();
+                    auto bbox2 = other_shape->bbox();
 
-                if (!check_aabb_collision(bbox1, bbox2)) {
-                    continue;
-                }
-
-                for (auto& pm : shape->pm_structure) {
-                    if (!point_to_aabb_check(bbox2, pm->pos)) {
+                    if (!check_aabb_collision(bbox1, bbox2)) {
                         continue;
                     }
 
-                    if (!point_inside_shape(*other_shape, pm->pos)) {
-                        continue;
-                    }
-                    Collinfo collinfo = Collinfo(pm, nullptr, INFINITY, Vector2D(0, 0), 0);
-                    for (auto& edge : other_shape->outedge) {
-                        // Calculate distance between point mass and edge
-                        Vector2D A = edge.p1->pos;
-                        Vector2D B = edge.p2->pos;
-                        Vector2D C = pm->pos;
-                        Vector2D AB = B - A;
-                        Vector2D AC = C - A;
-                        auto length_AB = AB.length();
-                        float ab2 = AB.dot(AB);
-                        float acab = AC.dot(AB);
-                        auto dist = abs(AB.cross(AC)) / length_AB;
-                        auto AB_dir = AB / length_AB;
-                        if (dist < collinfo.dist) {
-                            collinfo.dist = dist;
-                            float t = acab / ab2;
-                            t = max(0.0f, min(1.0f, t));
-                            collinfo.normal = Vector2D(-AB_dir.y, AB_dir.x);
-                            if (AC.dot(collinfo.normal) > 0) {
-                                collinfo.normal = -1 * collinfo.normal;
+                    for (auto& pm : shape->pm_structure) {
+                        if (!point_to_aabb_check(bbox2, pm->pos)) {
+                            continue;
+                        }
+
+                        if (!point_inside_shape(*other_shape, pm->pos)) {
+                            continue;
+                        }
+                        Collinfo collinfo = Collinfo(pm, nullptr, INFINITY, Vector2D(0, 0), 0);
+                        for (auto& edge : other_shape->outedge) {
+                            // Calculate distance between point mass and edge
+                            Vector2D A = edge.p1->pos;
+                            Vector2D B = edge.p2->pos;
+                            Vector2D C = pm->pos;
+                            Vector2D AB = B - A;
+                            Vector2D AC = C - A;
+                            auto length_AB = AB.length();
+                            float ab2 = AB.dot(AB);
+                            float acab = AC.dot(AB);
+                            auto dist = abs(AB.cross(AC)) / length_AB;
+                            auto AB_dir = AB / length_AB;
+                            if (dist < collinfo.dist) {
+                                collinfo.dist = dist;
+                                float t = acab / ab2;
+                                t = max(0.0f, min(1.0f, t));
+                                collinfo.normal = Vector2D(-AB_dir.y, AB_dir.x);
+                                if (AC.dot(collinfo.normal) > 0) {
+                                    collinfo.normal = -1 * collinfo.normal;
+                                }
+                                collinfo.interp_value = t;
+                                collinfo.edge = &edge;
                             }
-                            collinfo.interp_value = t;
-                            collinfo.edge = &edge;
+                        }
+                        if (collinfo.edge != nullptr) {
+#pragma omp critical
+                            collinfos.push_back(collinfo);
                         }
                     }
-                    if (collinfo.edge != nullptr) {
-                        collinfos.push_back(collinfo);
-                    }
-                }
 
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < world.size(); ++i) {
+                auto shape = world[i];
+                for (auto& other_shape : world) {
+                    if (shape == other_shape) {
+                        continue;
+                    }
+                    auto bbox1 = shape->bbox();
+                    auto bbox2 = other_shape->bbox();
+
+                    if (!check_aabb_collision(bbox1, bbox2)) {
+                        continue;
+                    }
+
+                    for (auto& pm : shape->pm_structure) {
+                        if (!point_to_aabb_check(bbox2, pm->pos)) {
+                            continue;
+                        }
+
+                        if (!point_inside_shape(*other_shape, pm->pos)) {
+                            continue;
+                        }
+                        Collinfo collinfo = Collinfo(pm, nullptr, INFINITY, Vector2D(0, 0), 0);
+                        for (auto& edge : other_shape->outedge) {
+                            // Calculate distance between point mass and edge
+                            Vector2D A = edge.p1->pos;
+                            Vector2D B = edge.p2->pos;
+                            Vector2D C = pm->pos;
+                            Vector2D AB = B - A;
+                            Vector2D AC = C - A;
+                            auto length_AB = AB.length();
+                            float ab2 = AB.dot(AB);
+                            float acab = AC.dot(AB);
+                            auto dist = abs(AB.cross(AC)) / length_AB;
+                            auto AB_dir = AB / length_AB;
+                            if (dist < collinfo.dist) {
+                                collinfo.dist = dist;
+                                float t = acab / ab2;
+                                t = max(0.0f, min(1.0f, t));
+                                collinfo.normal = Vector2D(-AB_dir.y, AB_dir.x);
+                                if (AC.dot(collinfo.normal) > 0) {
+                                    collinfo.normal = -1 * collinfo.normal;
+                                }
+                                collinfo.interp_value = t;
+                                collinfo.edge = &edge;
+                            }
+                        }
+                        if (collinfo.edge != nullptr) {
+                            collinfos.push_back(collinfo);
+                        }
+                    }
+
+                }
             }
         }
         auto end_time = chrono::high_resolution_clock::now();
@@ -615,9 +690,10 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
         // Present the renderer
         SDL_RenderPresent(renderer);
         dt = (SDL_GetTicks() - start) / 1000.0;
-        dt = min(0.01f, dt);
+        cout << "FPS: " << 1 / dt << " delta: " << dt << endl;
+        dt = min(0.01, dt);
         current_time_step += 1;
-        //cout << "FPS: " << 1 / dt << " delta: " << dt << endl;
+        
     }
     std::cout << "Total simulation update force time when run with OpenMP for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
     //std::cout << "Total simulation update force time when run sequentially for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
@@ -670,11 +746,10 @@ int SDL_main(int argc, char* argv[]) {
     //     }
     // }
 
-    int num_shapes = 20;
+    int num_shapes = 200;
     int rows = static_cast<int>(ceil(sqrt(num_shapes)));
     int cols = static_cast<int>(ceil(static_cast<float>(num_shapes) / rows));
     float spacing = 3.0f; // Adjust spacing as needed
-
     for(int i = 0; i < rows; ++i){
         for(int j = 0; j < cols; ++j){
             if(world.size() >= num_shapes){
@@ -683,10 +758,10 @@ int SDL_main(int argc, char* argv[]) {
             float x = j * spacing;
             float y = i * spacing;
             if( (i + j) % 2 == 0 ){
-                world.push_back(new Square(x, y, 1.0f, 40.0f, 1.0f));
+                world.push_back(new Square(x, y, 1.0f, 50.0f, 1.0f));
             }
             else{
-                world.push_back(new Circle(x, y, 1.0f, 11, 20.0f, 1.0f));
+                world.push_back(new Circle(x, y, 1.0f, 11, 100.0f, 1.0f));
             }
         }
     }

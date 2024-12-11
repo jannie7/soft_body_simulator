@@ -321,7 +321,7 @@ def main():
                                              text='SoftBody Simulation',
                                              manager=manager)
     details_Mode = gui.elements.UILabel(relative_rect=pg.Rect((10, 30+10), (-1, -1)),
-                                             text='Mode: Sequential',
+                                             text='Mode: Linear Algebra',
                                              manager=manager)
     details_fps = gui.elements.UILabel(relative_rect=pg.Rect((10, 50+10), (-1, -1)),
                                              text='FPS/dt: 0/0ms',
@@ -351,7 +351,7 @@ def main():
     # world.append(Circle(4, 20, 0.5,11,m=1,k=100))
 
 
-    num_shapes = 20
+    num_shapes = 10
     rows = math.ceil(math.sqrt(num_shapes))
     cols = math.ceil(num_shapes / rows)
     spacing = 3  # Adjust spacing as needed
@@ -475,15 +475,15 @@ def main():
                                 pm.pos = positions[i]
                                 pm.velocity = velocities[i]
                                 pm.force = forces[i]
-                            print(f"conversion time {time.perf_counter()-start_conv}")
+                            #print(f"conversion time {time.perf_counter()-start_conv}")
                     if(not numpy_mode):
                         start_conv = time.perf_counter()
                         for i,point in enumerate(points_ref):
                             point.pos = positions[i]
                             point.velocity = velocities[i]
                             point.force = forces[i]     
-                        print(f"conversion time {time.perf_counter()-start_conv}")
-                    details_Mode.set_text(f"Mode: {'Numpy (Linear Algebra)' if numpy_mode else 'Sequential'}")
+                        #print(f"conversion time {time.perf_counter()-start_conv}")
+                    
                     mode_changed = True
                 if(event.ui_element == Render_Springs_btn):
                     show_spring = not show_spring
@@ -511,7 +511,6 @@ def main():
             Main_camera.pos[1] += pan_amt[1] 
             pan_start = pan_end
         manager.update(dt)
-
         
         collusion_info = []
 
@@ -696,6 +695,7 @@ def main():
 
         if(time.perf_counter()-last_ui_update > 0.250):
             last_ui_update = time.perf_counter()
+            details_Mode.set_text(f"Mode: {'Numpy (Linear Algebra)' if numpy_mode else 'Sequential'}")
             details_fps.set_text(f"FPS/dt (Avg): {1/(dt_sum/count):.0f}/{dt_sum*1000/count:.2f}ms (Current: {dt*1000:0.1f}ms)")
             details_sim.set_text(f"Sim time: {simulation_time*1000/count:.3f}ms")
             details_col.set_text(f"Col time: {collision_time*1000/count:.3f}ms")
