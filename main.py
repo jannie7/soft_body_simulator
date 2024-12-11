@@ -350,8 +350,9 @@ def main():
     # world.append(Circle(-1, 20, 1,10,m=1,k=100))
     # world.append(Circle(4, 20, 0.5,11,m=1,k=100))
 
+    numpy_mode = False
+    num_shapes = 64
 
-    num_shapes = 10
     rows = math.ceil(math.sqrt(num_shapes))
     cols = math.ceil(num_shapes / rows)
     spacing = 3  # Adjust spacing as needed
@@ -363,9 +364,9 @@ def main():
             x = j * spacing
             y = i * spacing
             if (i + j) % 2 == 0:
-                world.append(Square(x, y, size=1, k=40, m=1))
+                world.append(Square(x, y, size=1, k=50, m=1))
             else:
-                world.append(Circle(x, y, radius=1, count=11, k=20, m=1))
+                world.append(Circle(x, y, radius=1, count=11, k=100, m=1))
             
 
     #numpy representation of world
@@ -385,19 +386,6 @@ def main():
         pm.pos = positions[i]
         pm.velocity = velocities[i]
         pm.force = forces[i]
-
-    
-
-    print(f"shape of springs {springs.shape}")
-    print(f"shape of positions {positions.shape}")
-    print(f"shape of lengths {lengths.shape}")
-    print(f"shape of masses {masses.shape}")
-    print(f"shape of velocities {velocities.shape}")
-    print(f"shape of forces {forces.shape}")
-    print(f"shape of spring_constants {spring_constants.shape}")
-
-
-    
     
     selected_point = None
     mouse_pos = None
@@ -405,7 +393,7 @@ def main():
     pan_start = None
     dt = DELTA
 
-    numpy_mode = True
+    
     show_spring = False
     render_mode = False
 
@@ -414,6 +402,7 @@ def main():
     shape_viz_time = 0
     collision_time = 0
     dt_sum = 0.001
+    runtime = 0
 
     last_ui_update = 0
 
@@ -499,6 +488,7 @@ def main():
                 shape_viz_time = 0
                 count = 1
                 dt_sum = 0.001
+                runtime =0
         if selected_point and type(mouse_pos) != type(None):
             mouse_pos = np.array(Main_camera.screen_to_world(pg.mouse.get_pos()))          
             selected_point.pos += (-selected_point.pos + mouse_pos)
@@ -515,7 +505,7 @@ def main():
         collusion_info = []
 
         start_sim = time.perf_counter()
-        delta_sim = min(0.016,dt)
+        delta_sim = min(0.01,dt)
         #simulation
         if not numpy_mode:
             for shape in world:    
@@ -680,14 +670,14 @@ def main():
             for spring in outedge:
                 p1 = screen_space_positions[spring[0]]
                 p2 = screen_space_positions[spring[1]]
-                if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                if not((p1[0] > 0 and p1[0] < display[0]) or (p1[1] > 0 and p1[1] < display[1])):
                     continue
                 pg.draw.aaline(surf, (255, 255, 255), p1, p2)
             if show_spring:
                 for spring in inner_springs:
                     p1 = screen_space_positions[spring[0]]
                     p2 = screen_space_positions[spring[1]]
-                    if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                    if not((p1[0] > 0 and p1[0] < display[0]) or (p1[1] > 0 and p1[1] < display[1])):
                         continue
                     pg.draw.aaline(surf, (0, 255, 255), p1, p2)
         
@@ -695,7 +685,7 @@ def main():
 
         if(time.perf_counter()-last_ui_update > 0.250):
             last_ui_update = time.perf_counter()
-            details_Mode.set_text(f"Mode: {'Numpy (Linear Algebra)' if numpy_mode else 'Sequential'}")
+            details_Mode.set_text(f"Mode: {'Numpy (Linear Algebra)' if numpy_mode else 'Sequential'} {runtime:.2f} s")
             details_fps.set_text(f"FPS/dt (Avg): {1/(dt_sum/count):.0f}/{dt_sum*1000/count:.2f}ms (Current: {dt*1000:0.1f}ms)")
             details_sim.set_text(f"Sim time: {simulation_time*1000/count:.3f}ms")
             details_col.set_text(f"Col time: {collision_time*1000/count:.3f}ms")
@@ -717,6 +707,7 @@ def main():
         
         dt = time.perf_counter()-start
         dt_sum += dt
+        runtime += delta_sim
 
 
 

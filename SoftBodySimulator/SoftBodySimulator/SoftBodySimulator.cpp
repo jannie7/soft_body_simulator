@@ -6,7 +6,12 @@
 #include <thread>
 #include <omp.h> // For openMP 
 #include <chrono>
+#include <array>
 #include <SDL.h>
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_sdlrenderer2.h"
+
 #define PI 3.14159265358979323846
 #define WINDOW_WIDTH 1280   // Set the desired window width
 #define WINDOW_HEIGHT 720
@@ -142,25 +147,20 @@ public:
     vector<Spring> outedge;
     float k;
 
-    float* bbox() {
+    std::array<float, 4> bbox() {
         float x_min = pm_structure[0]->pos.x;
         float x_max = pm_structure[0]->pos.x;
         float y_min = pm_structure[0]->pos.y;
         float y_max = pm_structure[0]->pos.y;
 
         for (const auto& pm : pm_structure) {
-            x_min = min(x_min, pm->pos.x);
-            x_max = max(x_max, pm->pos.x);
-            y_min = min(y_min, pm->pos.y);
-            y_max = max(y_max, pm->pos.y);
+            x_min = std::min(x_min, pm->pos.x);
+            x_max = std::max(x_max, pm->pos.x);
+            y_min = std::min(y_min, pm->pos.y);
+            y_max = std::max(y_max, pm->pos.y);
         }
-        float* bbox = new float[4];
-        bbox[0] = x_min;
-        bbox[1] = x_max;
-        bbox[2] = y_min;
-        bbox[3] = y_max;
 
-        return bbox;
+        return { x_min, x_max, y_min, y_max }; // Return as std::array
     }
 
     void update_forces(float delta) {
@@ -216,7 +216,7 @@ public:
 
 class Circle : public Shape {
 public:
-    Circle(float x, float y, float radius, int count = 20, float k = 40.0f, float m = 1.0f) {
+    Circle(float x, float y, float radius, int count = 20, float k = 20.0f, float m = 1.0f)  {
         float angle_step = 2 * PI / count;
         for (int i = 0; i < count; ++i) {
             float angle = i * angle_step;
@@ -224,13 +224,37 @@ public:
             float py = y + radius * sin(angle);
             pm_structure.push_back(new PointMass(px, py, m / count));
         }
-        outedge = vector<Spring>();
+
         for (int i = 0; i < count; ++i) {
-            auto edge =Spring(pm_structure[i], pm_structure[(i + 1) % count], k);
-            spring_structure.push_back(edge);
-            outedge.push_back(edge);
+            spring_structure.push_back(Spring(pm_structure[i], pm_structure[(i + 1) % count], k));
+            spring_structure.push_back(Spring(pm_structure[i], pm_structure[(i + 2) % count], k));
             spring_structure.push_back(Spring(pm_structure[i], pm_structure[(i + 3) % count], k));
         }
+
+        outedge = vector<Spring>();
+        for (int i = 0; i < count; ++i) {
+            outedge.push_back(spring_structure[i * 3]);
+        }
+
+        for (int i = 0; i < count; ++i) {
+            Spring spring = Spring(pm_structure[i], pm_structure[(i + count / 2) % count], k);
+            bool exists = false;
+            for (const auto& s : spring_structure) {
+                if ((spring.p1 == s.p1 && spring.p2 == s.p2) || (spring.p1 == s.p2 && spring.p2 == s.p1)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                spring_structure.push_back(spring);
+            }
+        }
+        make_innerSprings();
+    }
+
+private:
+    void make_innerSprings() {
+        // Implementation of make_innerSprings() method
     }
 };
 
@@ -281,14 +305,14 @@ public:
         : pm(pm), edge(edge), dist(dist), normal(normal), interp_value(interp_value) {}
 };
 
-bool check_aabb_collision(const float* bbox1, const float* bbox2) {
+bool check_aabb_collision(const std::array<float, 4> bbox1, const std::array<float, 4> bbox2) {
     if (bbox1[0] < bbox2[1] && bbox1[1] > bbox2[0] && bbox1[2] < bbox2[3] && bbox1[3] > bbox2[2]) {
         return true;
     }
     return false;
 }
 
-bool point_to_aabb_check(const float* bbox, const Vector2D& point) {
+bool point_to_aabb_check(const std::array<float, 4> bbox, const Vector2D& point) {
     if (point.x > bbox[0] && point.x < bbox[1] && point.y > bbox[2] && point.y < bbox[3]) {
         return true;
     }
@@ -373,11 +397,11 @@ void resolve_collision(const Collinfo& collinfo) {
     // Penetration resolution for point_mass and virtual_point
     Vector2D pmove = normal * (collinfo.dist + tolerance) * (total_mass / (point_mass->mass + total_mass));
     Vector2D emove = normal * (collinfo.dist + tolerance) * (point_mass->mass / (point_mass->mass + total_mass));
-
-    point_mass->pos += pmove;
-
-    edge->p1->pos -= emove * (1 - interp_value) * weight_p1;
-    edge->p2->pos -= emove * interp_value * weight_p2;
+    {
+        point_mass->pos += pmove;
+        edge->p1->pos -= emove * (1 - interp_value) * weight_p1;
+        edge->p2->pos -= emove * interp_value * weight_p2;
+    }
 
     // Calculate virtual point position and velocity
     Vector2D virtual_point_pos = (edge->p1->mass * edge->p1->pos + edge->p2->mass * edge->p2->pos) / total_mass;
@@ -398,33 +422,48 @@ void resolve_collision(const Collinfo& collinfo) {
     Vector2D tangential_velocity = tangent * relative_velocity.dot(tangent);
 
     Vector2D impulse = normal_velocity_vec * restitution * point_mass->mass * total_mass / (point_mass->mass + total_mass);
-    point_mass->velocity -= impulse / point_mass->mass;
-    edge->p1->velocity += impulse * (1 - interp_value) * weight_p1 / edge->p1->mass;
-    edge->p2->velocity += impulse * interp_value * weight_p2 / edge->p2->mass;
+
+    {
+        point_mass->velocity -= impulse / point_mass->mass;
+        edge->p1->velocity += impulse * (1 - interp_value) * weight_p1 / edge->p1->mass;
+        edge->p2->velocity += impulse * interp_value * weight_p2 / edge->p2->mass;
+    }
 
     Vector2D friction_impulse = tangential_velocity * friction_coefficient * point_mass->mass;
-    point_mass->velocity -= friction_impulse / point_mass->mass;
-    edge->p1->velocity += friction_impulse * (1 - interp_value) * weight_p1 / edge->p1->mass;
-    edge->p2->velocity += friction_impulse * interp_value * weight_p2 / edge->p2->mass;
+
+    {
+        point_mass->velocity -= friction_impulse / point_mass->mass;
+        edge->p1->velocity += friction_impulse * (1 - interp_value) * weight_p1 / edge->p1->mass;
+        edge->p2->velocity += friction_impulse * interp_value * weight_p2 / edge->p2->mass;
+    }
 }
 
-void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camera, int num_time_steps) {
+void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, ImGuiIO* io, Camera* camera,bool threading = false) {
+    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    
     bool running = true;
     SDL_Event event;
 
     PointMass* dragged_pm = nullptr;
-    double dt = 0.001;
+    float dt = 0.001f;
     bool panning = false;
     Vector2D pan_start;
     // Main SDL loop
     int current_time_step = 0;
-    float total_force_update_time = 0.0f;
-    float total_collision_detectio_time = 0.0f;
-    float total_parallelizable_time = 0.0f;
-	bool use_openmp = true;
-    while (running && current_time_step < num_time_steps) {
-        auto start = SDL_GetTicks();
+	float simtime = 0.0f;
+    float collision_detection_time = 0.0f;
+    float collision_resolution_time = 0.0f;
+	float rendertime = 0.0f;
+    float deltatime = 0.0f;
+    float runtime = 0.0f;
+    int count = 0;
+	bool use_openmp = threading;
+    while (running) {
+        static bool changed = false;
+        count++;
+        auto start = high_resolution_clock::now();
         while (SDL_PollEvent(&event)) {
+            ImGui_ImplSDL2_ProcessEvent(&event);
             if (event.type == SDL_QUIT) {
                 running = false;
             }
@@ -489,29 +528,29 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
 
         // Update forces and point masses - parallelism introduced
 
-        auto start_force_time = high_resolution_clock::now();
+        auto simulation_start = high_resolution_clock::now();
+		float delta = std::min(0.01f, dt);
         if (use_openmp) {
-#pragma omp parallel for
+#pragma omp parallel for 
             for (int i = 0; i < world.size(); ++i) {
-                world[i]->update_forces(dt);
+                world[i]->update_forces(delta);
             }
         }
         else
         {
             for (auto& shape : world) {
-                shape->update_forces(dt);
+                shape->update_forces(delta);
             }
         }
-        auto end_force_time = chrono::high_resolution_clock::now();
-        chrono::duration<float> duration = end_force_time - start_force_time; 
-        total_force_update_time += duration.count();
-        total_parallelizable_time += duration.count();
+        auto sim_end = chrono::high_resolution_clock::now();
+        chrono::duration<float> duration = sim_end - simulation_start;
+		simtime += duration.count();
         
         // everything within this is updating perfectly fine 
         vector<Collinfo> collinfos;
+
         // Collision detection
-        auto start_time = high_resolution_clock::now();
-        
+        auto start_time_cold = high_resolution_clock::now();        
 		//worse possible way imaginable to do this but its late and i need to sleep (code auto compeletion wrote the part after but its late lmao)
         if (use_openmp) {
 #pragma omp parallel for
@@ -625,35 +664,33 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
                 }
             }
         }
-        auto end_time = chrono::high_resolution_clock::now();
-        chrono::duration<float> collision_duration = end_time - start_time;
-        total_collision_detectio_time += collision_duration.count();
-        total_parallelizable_time += collision_duration.count();
+        auto end_time_cold = chrono::high_resolution_clock::now();
+        chrono::duration<float> collision_duration = end_time_cold - start_time_cold;
+        collision_detection_time += collision_duration.count();
        
         // Clear screen
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); // white background
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 1);
         SDL_RenderClear(renderer);
 
         // Collision resolution
-        for (auto& collinfo : collinfos) {
-            resolve_collision(collinfo);
-
-            //draw normal and tangent
-           /* Vector2D edge_center = collinfo.pm->pos;
-            Vector2D normal_end = edge_center + collinfo.normal * collinfo.dist;
-            Vector2D tangent = Vector2D(-collinfo.normal.y, collinfo.normal.x);
-            Vector2D tangent_end = edge_center + tangent * 1;
-            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-            Vector2D p1 = camera->screen_space(edge_center);
-            Vector2D p2 = camera->screen_space(normal_end);
-            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);
-            p1 = camera->screen_space(edge_center);
-            p2 = camera->screen_space(tangent_end);
-            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);*/
+        auto start_time_colr = high_resolution_clock::now();
+        if (use_openmp) {
+            for (int i = 0;i < collinfos.size();i++) {
+                resolve_collision(collinfos[i]);
+            }
         }
+        else
+        {
+            for (int i = 0;i < collinfos.size();i++) {
+                resolve_collision(collinfos[i]);
+            }
+        }
+        auto end_time_colr = chrono::high_resolution_clock::now();
+        chrono::duration<float> collision_res_duration = end_time_colr - start_time_colr;
+        collision_resolution_time += collision_res_duration.count();
 
-
+        // RENDERING
+        auto start_time_rendering = high_resolution_clock::now();
         // black color for springs
         for (auto& shape : world) {
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
@@ -665,16 +702,6 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
                 //cout << "Y position: " << spring.p1->position.y << endl; 
             }
             SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
-            //draw aabb
-           /* auto bbox = shape->bbox();
-            Vector2D p1 = camera->screen_space(Vector2D(bbox[0], bbox[2]));
-            Vector2D p2 = camera->screen_space(Vector2D(bbox[1], bbox[2]));
-            Vector2D p3 = camera->screen_space(Vector2D(bbox[1], bbox[3]));
-            Vector2D p4 = camera->screen_space(Vector2D(bbox[0], bbox[3]));
-            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-            SDL_RenderDrawLine(renderer, p2.x, p2.y, p3.x, p3.y);
-            SDL_RenderDrawLine(renderer, p3.x, p3.y, p4.x, p4.y);
-            SDL_RenderDrawLine(renderer, p4.x, p4.y, p1.x, p1.y);*/
         }
 
         // Draw point masses as larger red dots
@@ -684,21 +711,84 @@ void run_simulation(vector<Shape*>& world, SDL_Renderer* renderer, Camera* camer
             for (auto& pm : shape->pm_structure) {
                 //use camera for transformation
                 Vector2D p = camera->screen_space(pm->pos);
-                SDL_RenderFillRect(renderer, new SDL_Rect{ static_cast<int>(p.x - radius), static_cast<int>(p.y - radius), 2 * radius, 2 * radius });
+                SDL_Rect rect{ static_cast<int>(p.x - radius), static_cast<int>(p.y - radius), 2 * radius, 2 * radius };
+                SDL_RenderFillRect(renderer,&rect);
             }
         }
+
+        //imgui
+        {
+            ImGui_ImplSDLRenderer2_NewFrame();
+            ImGui_ImplSDL2_NewFrame();
+            ImGui::NewFrame();
+
+            //make window non movable nad put it on top left
+			ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+            //and non resizeable 
+			ImGui::SetNextWindowSize(ImVec2(285, 200), ImGuiCond_Always);
+			
+
+            ImGui::Begin("Softbody Simulation");
+            ImGui::Text("Mode: %s %0.2f s", use_openmp ? "OpenMP" : "Sequential",runtime);
+            if (ImGui::Button("Change"))
+            {
+                changed = true;
+                use_openmp = !use_openmp;
+            }
+            ImGui::Text("Average FPS/dt: %.02f/%.5f ms", ((count) / deltatime), (deltatime*1000 / count));
+            ImGui::Text("Simulation Time: %.5f ms", simtime*1000 / count);
+            ImGui::Text("Total Collision Time: %.5f ms", (collision_resolution_time + collision_detection_time) * 1000 / count);
+            ImGui::Text("Collision Detection Time: %.5f ms", collision_detection_time*1000 / count);
+            ImGui::Text("Collision Resolution Time: %.5f ms", collision_resolution_time * 1000 / count);            
+            ImGui::Text("Render Time: %.5f ms", rendertime * 1000 / count);
+            ImGui::Text("Number of Shapes: %d", world.size());
+            ImGui::End();
+            ImGui::Render();
+            SDL_RenderSetScale(renderer, io->DisplayFramebufferScale.x, io->DisplayFramebufferScale.y);
+            SDL_SetRenderDrawColor(renderer, (Uint8)(clear_color.x * 255), (Uint8)(clear_color.y * 255), (Uint8)(clear_color.z * 255), (Uint8)(clear_color.w * 255));
+            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        }
+
+
         // Present the renderer
         SDL_RenderPresent(renderer);
-        dt = (SDL_GetTicks() - start) / 1000.0;
-        cout << "FPS: " << 1 / dt << " delta: " << dt << endl;
-        dt = min(0.01, dt);
-        current_time_step += 1;
-        
+        auto end_time_rendering = chrono::high_resolution_clock::now();
+        chrono::duration<float> render_duration = end_time_rendering - start_time_rendering;
+        rendertime += render_duration.count();
+
+        if (count > 1000)
+        {
+            float target = 100;
+            simtime *= target / count;
+            collision_detection_time *= target / count;
+            collision_resolution_time *= target / count;
+            rendertime *= target / count;
+            deltatime *= target / count;
+            count = target;
+        }
+        if (changed)
+        {
+			changed = false;
+            simtime = 0;
+            collision_detection_time =0;
+            collision_resolution_time = 0;
+            rendertime = 0;
+            deltatime = 0;
+            count = 1;
+            runtime = 0;
+        }
+
+		auto end = high_resolution_clock::now();
+        chrono::duration<float> duration_all = end - start;
+        dt = duration_all.count();
+        deltatime += dt;
+		runtime += delta;
     }
-    std::cout << "Total simulation update force time when run with OpenMP for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
-    //std::cout << "Total simulation update force time when run sequentially for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
-    std::cout << "Sequential collision detection time : " << total_collision_detectio_time << " milliseconds" << endl;
-    std::cout << "Total parallelizable regions time : " << total_parallelizable_time << " milliseconds" << endl;
+
+    //std::cout << "Total simulation update force time when run with OpenMP for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
+    ////std::cout << "Total simulation update force time when run sequentially for simulation with " << num_time_steps << " steps and " << world.size() << " shapes in simulation: " << total_force_update_time << " milliseconds." << endl;
+    //std::cout << "Sequential collision detection time : " << total_collision_detectio_time << " milliseconds" << endl;
+    //std::cout << "Total parallelizable regions time : " << total_parallelizable_time << " milliseconds" << endl;
 }
 
 int SDL_main(int argc, char* argv[]) {
@@ -707,6 +797,10 @@ int SDL_main(int argc, char* argv[]) {
         std::cerr << "SDL could not initialize! SDL_Error: " << SDL_GetError() << std::endl;
         return -1;
     }
+
+#ifdef SDL_HINT_IME_SHOW_UI
+    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+#endif
 
     // Create window and renderer
     SDL_Window* window = SDL_CreateWindow("Physics Simulation", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
@@ -723,6 +817,17 @@ int SDL_main(int argc, char* argv[]) {
         SDL_Quit();
         return -1;
     }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    ImGui::StyleColorsDark();
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer2_Init(renderer);
+
 
     // Create simulation world
     vector<Shape*> world;
@@ -745,8 +850,10 @@ int SDL_main(int argc, char* argv[]) {
     //         world.push_back(new Circle(x, y, radius, points, mass));
     //     }
     // }
+	
+    bool use_multithreading = false;
+    int num_shapes = 1024;
 
-    int num_shapes = 200;
     int rows = static_cast<int>(ceil(sqrt(num_shapes)));
     int cols = static_cast<int>(ceil(static_cast<float>(num_shapes) / rows));
     float spacing = 3.0f; // Adjust spacing as needed
@@ -765,41 +872,19 @@ int SDL_main(int argc, char* argv[]) {
             }
         }
     }
-
-    // world.push_back(new Square(0, 10, 0.5f, 5.0f, 0.1f));
-    // world.push_back(new Square(5, 10, 2.5f));
-    // world.push_back(new Circle(-1, 20, 1.0f, 10, 1.0f, 100.0f));
-    // world.push_back(new Circle(4, 20, 0.5f, 11, 1.0f, 100.0f));
-
-    /*
-    world.push_back(new Square(-2, 5, 1, 20));
-    world.push_back(new Square(0, 5, 1, 20));
-    world.push_back(new Circle(4, 5, 1.5, 11, 40, 1)); // okay something is weird with the circle and all i can say is that it seems to be semi-dependent on the radius of the circle
-    world.push_back(new Circle(-5, 5, 0.5, 11, 40, 1));
-    world.push_back(new Circle(-7, 5, 0.5, 11, 40, 1));
-    world.push_back(new Circle(-9, 5, 0.5, 11, 40, 1));
-    world.push_back(new Circle(7, 5, 0.5, 11, 40, 1));
-    world.push_back(new Circle(9, 5, 0.5, 11, 40, 1));
-    world.push_back(new Square(0, 2, 0.5, 20));
-    world.push_back(new Square(7, 2, 1, 20));
-    world.push_back(new Square(1, 2, 0.5, 20));
-    world.push_back(new Circle(9, 2, 0.5, 11, 40, 1));
-    world.push_back(new Circle(6, 2, 0.5, 11, 40, 1));
-    world.push_back(new Circle(-5, 2, 0.5, 11, 40, 1));
-    world.push_back(new Circle(-3, 2, 0.5, 11, 40, 1));
-    world.push_back(new Circle(-7, 2, 0.5, 11, 40, 1));
-    */
-    Camera Main_camera = Camera(Vector2D(0, 2), 10.0f, WINDOW_WIDTH, WINDOW_HEIGHT);
+    Camera Main_camera = Camera(Vector2D(5, 5), 15.0f, WINDOW_WIDTH, WINDOW_HEIGHT);
 
     // Run the simulation with SDL rendering
-    run_simulation(world, renderer, &Main_camera, 1000);
+    run_simulation(world, renderer,  &io, &Main_camera, use_multithreading);
 
     // Cleanup and close SDL
     for (auto& shape : world) {
         delete shape;
     }
 
-
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
 
 
     SDL_DestroyRenderer(renderer);
