@@ -303,7 +303,7 @@ def main():
     pg.init()
     display = (1280, 720)
     surf = pg.display.set_mode(display)
-    pg.display.set_caption("Test")
+    pg.display.set_caption("Softbody Simulation")
 
     manager = gui.UIManager(display)
 
@@ -351,7 +351,7 @@ def main():
     # world.append(Circle(4, 20, 0.5,11,m=1,k=100))
 
     numpy_mode = False
-    num_shapes = 64
+    num_shapes = 8
 
     rows = math.ceil(math.sqrt(num_shapes))
     cols = math.ceil(num_shapes / rows)
