@@ -851,8 +851,8 @@ int SDL_main(int argc, char* argv[]) {
     //     }
     // }
 	
-    bool use_multithreading = false;
-    int num_shapes = 1024;
+    bool use_multithreading = true;
+    int num_shapes = 8;
 
     int rows = static_cast<int>(ceil(sqrt(num_shapes)));
     int cols = static_cast<int>(ceil(static_cast<float>(num_shapes) / rows));
