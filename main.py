@@ -100,7 +100,6 @@ class Triangle(Shape):
         self.outedge = self.spring_structure
         self.make_innerSprings()
 
-
 class Camera:
     def __init__(self, pos, scale,display):
         self.pos = pos
@@ -316,6 +315,9 @@ def main():
     Render_transfrom_btn = gui.elements.UIButton(relative_rect=pg.Rect((1280-150-10, 70), (150, 25)),
                                              text='Transform Mode',
                                              manager=manager)
+    Draw_btn = gui.elements.UIButton(relative_rect=pg.Rect((1280-150-10, 100), (150, 25)),
+                                             text='Draw',
+                                             manager=manager)
     
     details_test = gui.elements.UILabel(relative_rect=pg.Rect((10, 10), (-1, -1)),
                                              text='SoftBody Simulation',
@@ -343,12 +345,6 @@ def main():
     Main_camera = Camera(np.array([5.0,5.0]), 15,display)
 
     world = []
-
-    # world.append(Square(0, 10, 0.5,5,m=0.1))
-    # world.append(Square(5, 10, 2.5))
-    # world.append(Triangle(10, 10, 2.5,m=0.5))
-    # world.append(Circle(-1, 20, 1,10,m=1,k=100))
-    # world.append(Circle(4, 20, 0.5,11,m=1,k=100))
 
     numpy_mode = False
     num_shapes = 8
@@ -393,6 +389,10 @@ def main():
     pan_start = None
     dt = DELTA
 
+    draw_mode = 0
+    temp_shape = None
+    Closest_point = None
+    Spring_Start = None
     
     show_spring = False
     render_mode = False
@@ -418,31 +418,6 @@ def main():
             if event.type == pg.QUIT:
                 pg.quit()
                 quit()  
-            if event.type == pg.MOUSEBUTTONDOWN:   
-                if(event.button == 1):
-                    pos_cursor = np.array(Main_camera.screen_to_world(pg.mouse.get_pos()))
-                    selected_point = None
-                    min_dist = float('inf')
-                    for shape in world:
-                        for pm in shape.pm_structure:
-                            dist = np.linalg.norm(pm.pos - pos_cursor)
-                            if dist < min_dist:
-                                min_dist = dist
-                                selected_point = pm
-                    if selected_point and min_dist<Main_camera.scale/10:                    
-                        mouse_pos = pos_cursor
-                    else:
-                        selected_point = None
-                elif(event.button == 2):
-                    pan_mode = True
-                    pan_start = np.array(pg.mouse.get_pos())
-            if event.type == pg.MOUSEBUTTONUP:                
-                selected_point = None 
-                pan_mode = False
-            if event.type == pg.MOUSEWHEEL:
-                direction = event.y>0
-                target_scale = np.clip(Main_camera.scale * (1.1 if direction else 0.9),0.1,1000)
-                Main_camera.update_scale(target_scale)
             if event.type == gui.UI_BUTTON_PRESSED:
                 if event.ui_element == Mode_btn:   
                     numpy_mode = not numpy_mode 
@@ -480,6 +455,97 @@ def main():
                 if(event.ui_element == Render_transfrom_btn):
                     render_mode = not render_mode
                     mode_changed = True
+                if(event.ui_element == Draw_btn):
+                    if draw_mode == 0:
+                        draw_mode = 1
+                        Draw_btn.set_text('Cancel')
+                        temp_shape = Shape(k=100)
+                        world.append(temp_shape)
+                        show_spring = True
+                    else:
+                        draw_mode = 0
+                        temp_shape = None
+                        Spring_Start = None
+                        Closest_point = None
+                        show_spring = False
+                        Draw_btn.set_text('Draw')
+                    mode_changed = True
+            if event.type == pg.MOUSEBUTTONDOWN:   
+                if(event.button == 1 and draw_mode == 0):
+                    pos_cursor = np.array(Main_camera.screen_to_world(pg.mouse.get_pos()))
+                    selected_point = None
+                    min_dist = float('inf')
+                    for shape in world:
+                        for pm in shape.pm_structure:
+                            dist = np.linalg.norm(pm.pos - pos_cursor)
+                            if dist < min_dist:
+                                min_dist = dist
+                                selected_point = pm
+                    if selected_point and min_dist<Main_camera.scale/10:                    
+                        mouse_pos = pos_cursor
+                    else:
+                        selected_point = None
+                elif(event.button == 2):
+                    pan_mode = True
+                    pan_start = np.array(pg.mouse.get_pos())
+                if(draw_mode != 0):                
+                    if(event.button == 1 and draw_mode == 1):
+                        x, y = Main_camera.screen_to_world(pg.mouse.get_pos())
+                        temp_shape.pm_structure.append(point_mass(x, y, mass=1))
+                        if(len(temp_shape.pm_structure) > 1):
+                            temp_shape.spring_structure.append(Spring(temp_shape.pm_structure[-2], temp_shape.pm_structure[-1], temp_shape.k))
+                            temp_shape.outedge.append(temp_shape.spring_structure[-1])
+                    elif draw_mode == 1 and len(temp_shape.pm_structure) > 2 and event.button == 3:  
+                        temp_shape.spring_structure.append(Spring(temp_shape.pm_structure[0], temp_shape.pm_structure[-1], temp_shape.k))
+                        temp_shape.outedge.append(temp_shape.spring_structure[-1])
+                        for pm in temp_shape.pm_structure:
+                            pm.mass /= len(temp_shape.pm_structure)                   
+                        draw_mode = 2   
+                    elif draw_mode == 2 and event.button == 1:
+                        if(Spring_Start == None and Closest_point):
+                            Spring_Start = Closest_point
+                        elif(Spring_Start != None and Closest_point != None and Closest_point != Spring_Start):
+                            temp_shape.spring_structure.append(Spring(Spring_Start, Closest_point, temp_shape.k))
+                            Spring_Start = None
+                            Closest_point = None
+                            temp_shape.make_innerSprings()
+                    elif draw_mode == 2 and event.button == 3 and Spring_Start:
+                        Spring_Start = None
+                    elif draw_mode == 2 and event.button == 3:
+                                              
+                                               
+                        temp_shape.make_innerSprings()                                                
+                        draw_mode = 0
+                        temp_shape = None
+                        Spring_Start = None
+                        Closest_point = None
+                        show_spring = False
+                        Draw_btn.set_text('Draw')
+                        #sync
+                        start_conv = time.perf_counter()
+                        points_ref = [pm for shape in world for pm in shape.pm_structure]
+                        springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.spring_structure ])
+                        outedge = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.outedge ])
+                        inner_springs = np.array([np.array([points_ref.index(spring.p1),points_ref.index(spring.p2)]) for shape in world for spring in shape.inner_springs ])
+                        positions = np.array([pm.pos for pm in points_ref])
+                        lengths = np.array([spring.length for shape in world for spring in shape.spring_structure])
+                        masses = np.array([pm.mass for shape in world for pm in shape.pm_structure])
+                        velocities = np.array([pm.velocity for shape in world for pm in shape.pm_structure])
+                        forces = np.array([pm.force for shape in world for pm in shape.pm_structure])
+                        spring_constants = np.array([spring.k for shape in world for spring in shape.spring_structure]) 
+                        
+                        for i, pm in enumerate(points_ref):
+                            pm.pos = positions[i]
+                            pm.velocity = velocities[i]
+                            pm.force = forces[i]
+            if event.type == pg.MOUSEBUTTONUP:                
+                selected_point = None 
+                pan_mode = False
+            if event.type == pg.MOUSEWHEEL:
+                direction = event.y>0
+                target_scale = np.clip(Main_camera.scale * (1.1 if direction else 0.9),0.1,1000)
+                Main_camera.update_scale(target_scale)
+           
             manager.process_events(event)
             if mode_changed:
                 visualization_time = 0
@@ -504,8 +570,51 @@ def main():
         
         collusion_info = []
 
+        if draw_mode != 0:
+            mouse_pos_ss  = np.array(pg.mouse.get_pos())
+            mouse_pos = np.array(Main_camera.screen_to_world(mouse_pos_ss))
+            if(draw_mode == 1 and len(temp_shape.pm_structure) > 0):
+                Closest_point = temp_shape.pm_structure[-1]
+            if(draw_mode == 2):
+                Closest_point = None
+                min_dist = float('inf')
+                for point in temp_shape.pm_structure:
+                    dist = np.linalg.norm(point.pos - mouse_pos)
+                    if dist < min_dist:
+                        min_dist = dist
+                        Closest_point = point
+            
+            surf.fill((0, 0, 0, 0)) 
+            #draw line from Closest_point to mouse
+            if Closest_point:
+                pg.draw.aaline(surf, (255, 255, 0), Main_camera.screen_space(Closest_point.pos), Main_camera.screen_space(Spring_Start.pos) if Spring_Start else mouse_pos_ss)
+            
+            
+            for point in temp_shape.pm_structure:
+                pg.draw.circle(surf, (0, 255, 00) if point==Closest_point or point==Spring_Start else (255, 255, 255) , Main_camera.screen_space(point.pos), 5)
+            
+            for shape in world:
+                for spring in shape.outedge:
+                    p1 = Main_camera.screen_space(spring.p1.pos)
+                    p2 = Main_camera.screen_space(spring.p2.pos)
+                    if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                        continue
+                    pg.draw.aaline(surf, (255, 255, 255), p1, p2)
+                if show_spring:
+                    for spring in shape.inner_springs:
+                        p1 = Main_camera.screen_space(spring.p1.pos)
+                        p2 = Main_camera.screen_space(spring.p2.pos)
+                        if p1[0] < 0 or p1[0] > display[0] or p1[1] < 0 or p1[1] > display[1]:
+                            continue
+                        pg.draw.aaline(surf, (0, 255, 0), p1, p2)
+
+            manager.draw_ui(surf)
+            pg.display.update()
+            continue
+
         start_sim = time.perf_counter()
         delta_sim = min(0.01,dt)
+        
         #simulation
         if not numpy_mode:
             for shape in world:    
@@ -553,6 +662,7 @@ def main():
 
             positions[:, 1] = np.maximum(positions[:, 1], 0)  
             velocities[positions[:, 1] <= 0] *= np.array([0.1, -0.5])
+        
         simulation_time += time.perf_counter()-start_sim
 
         start_collission = time.perf_counter()
@@ -564,12 +674,12 @@ def main():
                 B_bbox = other_shape.bbox
                 if not check_aabb_collision(shape.bbox, B_bbox):
                     continue
-                for point_mass in shape.pm_structure:
+                for point_mass_ in shape.pm_structure:
                     #skip point if not inside aabb of other shape
-                    if(not point_to_aabb_check(point_mass.pos, B_bbox)):
+                    if(not point_to_aabb_check(point_mass_.pos, B_bbox)):
                         continue
                     #check if point is inside the shape
-                    if not point_inside_shape(point_mass, other_shape):
+                    if not point_inside_shape(point_mass_, other_shape):
                         continue
                     #find closest edge to point mass in other shape and calculate distance and normal
                     min_dist = float('inf')
@@ -579,7 +689,7 @@ def main():
                     interp_value = 0
                     for edge in other_shape.outedge:
                         #calculate perpindicular distance from point to edge
-                        dist = np.cross(edge.p2.pos - edge.p1.pos, edge.p1.pos - point_mass.pos)
+                        dist = np.cross(edge.p2.pos - edge.p1.pos, edge.p1.pos - point_mass_.pos)
                         dist = np.abs(dist) / np.linalg.norm(edge.p2.pos - edge.p1.pos)
                         if dist < min_dist:
                             #compute the normal of the edge
@@ -588,9 +698,9 @@ def main():
                                 continue
                             normal = normal / np.linalg.norm(normal)
                             #find point on the edge closest to the point mass
-                            t = np.dot(point_mass.pos - edge.p1.pos, edge.p2.pos - edge.p1.pos) / np.dot(edge.p2.pos - edge.p1.pos, edge.p2.pos - edge.p1.pos)
+                            t = np.dot(point_mass_.pos - edge.p1.pos, edge.p2.pos - edge.p1.pos) / np.dot(edge.p2.pos - edge.p1.pos, edge.p2.pos - edge.p1.pos)
                             #flip the normal if it is pointing away from the point mass
-                            if np.dot(normal, point_mass.pos - edge.p1.pos) > 0:
+                            if np.dot(normal, point_mass_.pos - edge.p1.pos) > 0:
                                 normal = -normal
                             min_dist = dist
                             closest_edge = edge
@@ -634,12 +744,12 @@ def main():
                     #         if np.dot(normal, point_mass.pos - hit_point) > 0:
                     #             normal = -normal
                     if closest_edge:
-                        collusion_info.append((point_mass, closest_edge, min_dist, closest_normal, interp_value))
+                        collusion_info.append((point_mass_, closest_edge, min_dist, closest_normal, interp_value))
                                          
         #collusion resolution           
-        for point_mass, edge, dist, normal, interp_value in collusion_info:
+        for point_mass_, edge, dist, normal, interp_value in collusion_info:
             #Example masses (replace with your actual values)
-            resolve_collision2(dist, point_mass, interp_value, edge, normal)
+            resolve_collision2(dist, point_mass_, interp_value, edge, normal)
             
             # tangent = np.array([-normal[1], normal[0]])
             # pg.draw.aaline(surf, (255, 0, 0), Main_camera.screen_space(point_mass.pos), Main_camera.screen_space(point_mass.pos + normal * 1), 4)
